@@ -1,58 +1,67 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+from scipy.optimize import minimize, basinhopping
 
-#function for calculating one billiard bounce
-def bounce(x, v, boundary, d_boundary):
-    #normalize s.t. velocity is direction unit vector
-    v = v/np.linalg.norm(v)
-    #minimize for spot along ball's path where it is closest to the wall (hits)
-    #analytically solveable for circle and (probably) ellipse, but doing this allows for any boundary so long
-    #    as you can describe the tangent line at any (x,y)
-    t_min = minimize(param_boundary, 1/2, args = (x, v, boundary), bounds = ((.01,1),),method = 'Powell').x[0]
-    #point where the path hits boundary; 2v used as second line segment point-- relies on normalization of boundaries
-    m = xy(t_min, x, x + 2*v)
-    #finds normalized normal line to the boundary edge hit
-    n = np.array([1, -1/d_boundary(*m)])
-    n /= np.linalg.norm(n)
-    #finds vector between normal line and x-axis (using dot product)
-    phi = np.arccos(n[0])
-    #corrects for QI and QIII
-    if m[0]/m[1] < 0:
-        phi = np.pi - phi
-    #new path from m
-    v_new = -np.matmul(R(phi), v)
+#calculate the normalized normal vector to the point boundary(t) using central difference formula for dydx
+def normal_line(s, boundary, eps = 1e-6):
+    n = ((boundary(s+eps) - boundary(s-eps))/(2*eps))[::-1]
+    #returns unit vector tangent line
+    return n/np.linalg.norm(n)
 
-    return m, v_new
+def collide(ts, x, v, boundary):
+    return np.linalg.norm(xy(ts[0], x, v) - boundary(ts[1]))
 
 #parametrization of line between p1 and p2-- input t in [0,1] to get [x,y]
-def xy(t, p1, p2):
+def xy(t, x, v):
+    #start and end of the line segment (holds so long as boundary is inside unit square)
+    p1 = x
+    p2 = x + 3*v
+
     x = p1[0] +  t*(p2[0]-p1[0])
     y = p1[1] +  t*(p2[1]-p1[1])
     return np.array([x,y])
-
-#distance to boundary parametrized
-def param_boundary(t, x, v, boundary):
-    return boundary(*xy(t, x, x + 2*v))
 
 #reflect around line theta from x axis
 def R(theta):
     return np.array([[np.cos(theta)**2 - np.sin(theta)**2, 2*np.cos(theta)*np.sin(theta)],
              [2*np.cos(theta)*np.sin(theta), np.sin(theta)**2 - np.cos(theta)**2]])
 
-#gives error in equation
-#move all nonzero terms to one side
-#keep boundary within radius 1
-def circle(x,y):
-    return np.abs(x**2 + y**2 - 1)
+#function for calculating one billiard bounce
+def bounce(x, v, boundary, tol = 1e-8, poincare = False):
+    #normalize s.t. velocity is direction unit vector
+    v = v/np.linalg.norm(v)
+    #Solve system of parametrized equations to find where the ball hits the boundary
+    #Analytically solveable for some boundaries, but numerical solution works for any boundarie
+    #t,s = minimize(collide, x0 = (0.58, .5), bounds = ((.01,1), (0,1)), args = (x,v,boundary), tol = 1e-8, method = 'Powell').x
+    minargs = {'bounds': ((.01,1), (0,1)), 'args' : (x,v,boundary), 'tol': tol}
+    #basin hops to preform relative to tolerance needed
+    N = int(.5 * (-np.log10(tol)) + 10)
+    t,s = basinhopping(collide, x0=(.5,.5), niter = N, minimizer_kwargs = minargs).x
+    m = boundary(s)
+    #finds normalized normal line to the boundary edge hit
+    n = normal_line(s, boundary)
+    #finds vector between normal line and x-axis (using dot product)
+    phi = np.arccos(np.abs(n[0]))
+    #corrects for QI and QIII
+    if m[0]/m[1] < 0:
+        phi = np.pi - phi
+    #new path from m
+    v_new = -np.matmul(R(phi), v)
+    #print(m, v_new)
+    #optional returning of poincare section
+    if poincare:
+        v_tangent = np.sqrt(1 - np.dot(v, n)**2)
+        return m, v_new, np.array([s, v_tangent])
 
-#return dy/dx
-def d_circle(x,y):
-    return (-1*x)/y
+    return m, v_new
 
-def ellipse(x,y):
-    return np.abs((x**2)/2 + y**2 - 0.5)
 
-#return dy/dx
-def d_ellipse(x,y):
-    return (x)/(-2*y)
+
+# two basic boundary options
+def circle(s):
+    s *= 2*np.pi
+    return np.array([np.cos(s),np.sin(s)])
+
+def ellipse(s):
+    s *= 2*np.pi
+    return np.array([np.cos(s), (1/np.sqrt(2))*np.sin(s)])
