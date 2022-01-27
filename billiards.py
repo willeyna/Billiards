@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import minimize, basinhopping
 
 #calculate the normalized normal vector to the point boundary(t) using central difference formula for dydx
-def normal_line(s, boundary, eps = 1e-6):
+def normal_line(s, boundary, eps = 1e-8):
     n = ((boundary(s+eps) - boundary(s-eps))/(2*eps))[::-1]
     #returns unit vector tangent line
     return n/np.linalg.norm(n)
@@ -35,7 +35,7 @@ def bounce(x, v, boundary, tol = 1e-8, poincare = False):
     #t,s = minimize(collide, x0 = (0.58, .5), bounds = ((.01,1), (0,1)), args = (x,v,boundary), tol = 1e-8, method = 'Powell').x
     minargs = {'bounds': ((.01,1), (0,1)), 'args' : (x,v,boundary), 'tol': tol}
     #basin hops to preform relative to tolerance needed
-    N = int(.5 * (-np.log10(tol)) + 10)
+    N = int((-np.log10(tol)) + 10)
     t,s = basinhopping(collide, x0=(.5,.5), niter = N, minimizer_kwargs = minargs).x
     m = boundary(s)
     #finds normalized normal line to the boundary edge hit
