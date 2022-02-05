@@ -10,4 +10,5 @@ Goals of the project:
   * Analyze all such parts for more complex boundaries like cardiods 
   
 
-  
+Known problems: 
+  * Non-differential boundaries (i.e. corners) give incorrect derivatives on boundaries, leading to stuck minimization   

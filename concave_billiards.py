@@ -36,17 +36,30 @@ boundary- parametrized boundary for the billiard to bounce in. function(t) retur
 tol- tolerance for the minimization routine to take into account. Determined minimization tolerance and number of basin hops preformed each call
 poincare- boolean value for whether or not to return poincare section each bounce.
             if true returns: x_new, v_new, [poincare_section]
+concavity- parameter describing how concave the inputted boundary is
+           (explicitly: breaks the minimization space into "concavity" number of segments to consider multiple hits
+                            along the line starting from x going out v)
 '''
-def bounce(x, v, boundary, tol = 1e-8, poincare = False):
+def bounce(x, v, boundary, tol = 1e-8, poincare = False, concavity = 10):
+    #distance to consider 0 for minimization
+    MIN_TOL = 1e-4
     #normalize s.t. velocity is direction unit vector
     v = v/np.linalg.norm(v)
-    #Solve system of parametrized equations to find where the ball hits the boundary
-    #Analytically solveable for some boundaries, but numerical solution works for any boundarie
-    #t,s = minimize(collide, x0 = (0.58, .5), bounds = ((.01,1), (0,1)), args = (x,v,boundary), tol = 1e-8, method = 'Powell').x
-    minargs = {'bounds': ((.01,1), (0,1)), 'args' : (x,v,boundary), 'tol': tol}
-    #basin hops to preform relative to tolerance needed
-    N = int((-np.log10(tol)))
-    t,s = basinhopping(collide, x0=(.5,.5), niter = N, minimizer_kwargs = minargs).x
+
+    #Grid space minimization to handle multiple minimum due to shape concavity
+    tgrid = np.linspace(0.01,1,concavity)
+    grid_mins = np.zeros([concavity-1, 3])
+    #basinhopping max iterations
+    N = int(-np.log10(tol))
+    for i in range(concavity-1):
+        minargs = {'bounds': ((tgrid[i],tgrid[i+1]), (0,1)), 'args' : (x,v,boundary), 'tol': tol}
+        #minimize over small region
+        res = basinhopping(collide, ((tgrid[i]+tgrid[i+1])/2, .8), niter = N, minimizer_kwargs = minargs)
+        grid_mins[i] = np.array([res.x[0], res.x[1], res.fun])
+    #takes the closest intersection point (first place hit by billiard)
+    minarg = np.min(np.where(grid_mins[:,2] < MIN_TOL))
+    t,s,val = grid_mins[minarg]
+
     m = boundary(s)
     #finds normalized normal line to the boundary edge hit
     n = normal_line(s, boundary)
