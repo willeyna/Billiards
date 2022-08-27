@@ -2,136 +2,183 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 
-#calculate the normalized normal vector to the point boundary(t) using central difference formula for dydx
-def normal_line(s, boundary, eps = 1e-8):
-    n = ((boundary(s+eps) - boundary(s-eps))/(2*eps))[::-1]
-    #returns unit vector tangent line
-    return n/np.linalg.norm(n)
 
-def collide(ts, x, v, boundary):
-    return np.linalg.norm(xy(ts[0], x, v) - boundary(ts[1]))
+class Billiards():
 
-#parametrization of line between p1 and p2-- input t in [0,1] to get [x,y]
-def xy(t, x, v):
-    #start and end of the line segment (holds so long as boundary is inside unit square)
-    p1 = x
-    p2 = x + 3*v
+    def __init__(self, boundary, x, v, poincare = False, convexity = 1000):
+        # set up inputs
+        self.xi = x
+        self.vi = v/np.linalg.norm(v)
+        self.boundary = boundary
+        self.poincare = poincare
+        self.N = convexity
 
-    x = p1[0] +  t*(p2[0]-p1[0])
-    y = p1[1] +  t*(p2[1]-p1[1])
-    return np.array([x,y])
+        # lists to hold history of x,v,t,poincare
+        self.x = [x]
+        self.v = [v]
+        self.t = []
+        self.p = []
 
-#reflect around line theta from x axis
-def R(theta):
-    return np.array([[np.cos(theta)**2 - np.sin(theta)**2, 2*np.cos(theta)*np.sin(theta)],
-             [2*np.cos(theta)*np.sin(theta), np.sin(theta)**2 - np.cos(theta)**2]])
+        self.nbounce = 0
 
-# calculates distance between border and movement line for spot t on border
-def border_dist(t, m, a, b, border):
-    x, y = border(t)
+        return
 
-    # gets rid of infinite/ large slopes to solve some conditioning problems
-    if m > 1:
-        dist = (1/m)*(y-b) + a - x
-    else:
-        dist = (m*(x-a) + b) - y
+    def bounce(self):
 
-    return dist
+        self._get_new_position()
+        self.x.append(self.xi)
 
-# given pos and vel info calculates the location of the next collision
-def collide(x, v, boundary, N=1000):
+        self._get_new_velocity()
+        self.v.append(self.vi)
 
-    # np warning suppression
-    if v[0] == 0:
-        m = np.inf
-    else:
-        m = v[1]/v[0]
+        #optional returning of poincare section
+        if self.poincare:
+            v_tangent = np.sqrt(1 - np.dot(self.vi, self._normal_line())**2)
+            self.p.append([self.t[-1], v_tangent])
 
-    a = x[0]
-    b = x[1]
+        self.nbounce += 1
 
-    # uses gridsearch to find location of possible zeros
-    T = np.linspace(0,1,N)
-    obj_val = np.zeros(N)
-    for i in range(N):
-        obj_val[i] = border_dist(T[i], m, a, b, boundary)
+        return
 
-    sign_change = (obj_val[:-1] * obj_val[1:]) < 0
-    boundaries = np.where(sign_change==True)[0]
+    def plot_path(self, N = 1000):
+        self.path_fig = plt.figure(figsize = (10, 10))
 
-    #number of possible solutions given the spacing of T
-    k = len(boundaries)
+        T = np.linspace(0, 1, N)
+        border = np.zeros([N, 2])
+        for i in range(N):
+            border[i] = self.boundary(T[i])
 
-    solns = np.zeros(k)
-    euc_dist = np.zeros(k)
-    positions = np.zeros([k, 2])
+        plt.plot(border[:,0], border[:,1], color = 'black')
+        plt.axis('equal')
 
-    obj = lambda t: border_dist(t, m, a, b, boundary)
+        plt.scatter(self.x[0][0], self.x[0][1], color = 'gray', alpha = .2)
 
-    # using possible zeros finds every zero along the line and their distance to the starting position
-    for i in range(k):
-        bracket = [T[boundaries[i]], T[boundaries[i]+1]]
-        # bretnq should always converge like bisection.. if not change to bisect w/o much loss
-        solns[i] = brentq(obj, bracket[0], bracket[1], xtol = 1e-14)
-        positions[i] = boundary(solns[i])
-        euc_dist[i] = np.linalg.norm(positions[i]-x)
+        for i in range(self.nbounce):
+            plt.plot([self.x[i][0], self.x[i+1][0]], [self.x[i][1], self.x[i+1][1]],
+                      color = 'red', alpha = (i+1)/self.nbounce)
+        plt.title("Billiard Path", fontsize = 14)
 
-    # masks out solutions along the correct movement direction (uses/requires constant velocity)
-    correct_dir = np.all(np.sign(positions - x) == np.sign(v), axis = 1)
-    euc_dist[~correct_dir] = np.inf
+        print("Path figure saved as self.path_fig")
+        return
 
-    # t values with the closest minimum
-    final_t = solns[np.argmin(euc_dist)]
-    final_x = boundary(final_t)
+    def plot_poincare(self, alpha = 0.5, s = 5, cmap = 'coolwarm'):
 
-    return final_t, final_x
+        assert self.poincare != False, "Must have poincare history enabled to plot"
+        assert self.p != [], "No poincare history has been saved"
 
-#function for calculating one billiard bounce
-'''
-Takes in a current position, velocity, and problem-specific information and returns the next location and velocity
-    the billiard would bounce to on the boundary
-x- 1d numpy array giving [x, y]
-v- 1d numpy array giving [v_x, v_y]
-boundary- parametrized boundary for the billiard to bounce in. function(t) returning [x,y] position on boundary as np array
-tol- tolerance for the minimization routine to take into account. Determined minimization tolerance and number of basin hops preformed each call
-poincare- boolean value for whether or not to return poincare section each bounce.
-            if true returns: x_new, v_new, [poincare_section]
-'''
-def bounce(x, v, boundary, poincare = False):
+        DELT = .1
+        self.poincare_fig = plt.figure(figsize = (10,10))
 
-    t, m = collide(x, v, boundary)
+        P = np.array(self.p)
+        cgrad = np.arange(len(P))
 
-    #finds normalized normal line to the boundary edge hit
-    n = normal_line(t, boundary)
+        plt.scatter(P[:,0], P[:,1], cmap = cmap, c = cgrad, alpha = alpha, s = s)
+        plt.xlim(0-DELT,1+DELT)
+        plt.ylim(0-DELT,1+DELT)
+        plt.xlabel('Location on Curve')
+        plt.ylabel("Tangential Velocity")
+        plt.title("Billiards Poincare Section", fontsize = 14)
 
-    #finds vector between normal line and x-axis (using dot product)
-    phi = np.arccos(np.abs(n[0]))
-    #corrects rotation matrix for QI and QIII
+        print("Poincare section figure saved as self.poincare_fig")
+        return
 
-    # np warning suppression
-    if m[1] != 0:
-        if m[0]/m[1] < 0:
-            phi = np.pi - phi
+    # computes the next pos and velocity of the ball after a bounce
+    def _get_new_position(self):
 
-    v_new = -np.matmul(R(phi), v)
+        # np warning suppression
+        if self.vi[0] == 0:
+            m = np.inf
+        else:
+            m = self.vi[1]/self.vi[0]
 
-    #optional returning of poincare section
-    if poincare:
-        #normalize s.t. velocity is direction unit vector
-        v = v/np.linalg.norm(v)
+        a = self.xi[0]
+        b = self.xi[1]
 
-        v_tangent = np.sqrt(1 - np.dot(v, n)**2)
-        return m, v_new, np.array([t, v_tangent])
+        # uses gridsearch to find location of possible zeros
+        T = np.linspace(0,1,self.N)
+        obj_val = np.zeros(self.N)
+        for i in range(self.N):
+            obj_val[i] = self._border_dist(T[i], m, a, b)
 
-    return m, v_new
+        sign_change = (obj_val[:-1] * obj_val[1:]) < 0
+        boundaries = np.where(sign_change==True)[0]
+
+        #number of possible solutions given the spacing of T
+        k = len(boundaries)
+
+        solns = np.zeros(k)
+        euc_dist = np.zeros(k)
+        positions = np.zeros([k, 2])
+
+        obj = lambda t: self._border_dist(t, m, a, b)
+
+        # using possible zeros finds every zero along the line and their distance to the starting position
+        for i in range(k):
+            bracket = [T[boundaries[i]], T[boundaries[i]+1]]
+            # bretnq should always converge like bisection.. if not change to bisect w/o much loss
+            solns[i] = brentq(obj, bracket[0], bracket[1], xtol = 1e-14)
+            positions[i] = self.boundary(solns[i])
+            euc_dist[i] = np.linalg.norm(positions[i]-self.xi)
+
+        # masks out solutions along the correct movement direction (uses/requires constant velocity)
+        correct_dir = np.all(np.sign(positions - self.xi) == np.sign(self.vi), axis = 1)
+        euc_dist[~correct_dir] = np.inf
+        euc_dist[np.isclose(euc_dist, 0)] = np.inf
+
+        # t values with the closest minimum
+        t = solns[np.argmin(euc_dist)]
+        self.t.append(t)
+        self.xi = self.boundary(t)
+
+        return
+
+    def _get_new_velocity(self):
+
+        #finds normalized normal line to the boundary edge hit
+        n = self._normal_line()
+
+        #finds vector between normal line and x-axis (using dot product)
+        phi = np.arccos(np.abs(n[0]))
+        #corrects rotation matrix for QI and QIII
+
+        # np warning suppression
+        if self.xi[1] != 0:
+            if self.xi[0]/self.xi[1] < 0:
+                phi = np.pi - phi
+
+        # reflects previous velocity about the normal line to the boundary
+        self.vi = -np.matmul(self._reflect(phi), self.vi)
+
+        return
+
+    # calculates distance between border and movement line for spot t on border
+    def _border_dist(self, t, m, a, b):
+        x, y = self.boundary(t)
+
+        # gets rid of infinite/ large slopes to solve some conditioning problems
+        if m > 1:
+            dist = (1/m)*(y-b) + a - x
+        else:
+            dist = (m*(x-a) + b) - y
+
+        return dist
+
+    #calculate the normalized normal vector to the point boundary(t) using central difference formula for dydx
+    def _normal_line(self, eps = 1e-6):
+        n = ((self.boundary(self.t[-1]+eps) - self.boundary(self.t[-1]-eps))/(2*eps))[::-1]
+        #returns unit vector tangent line
+        return n/np.linalg.norm(n)
 
 
+    #returns matrix for reflection around line theta from x axis
+    @staticmethod
+    def _reflect(theta):
+        return np.array([[np.cos(theta)**2 - np.sin(theta)**2, 2*np.cos(theta)*np.sin(theta)],
+                 [2*np.cos(theta)*np.sin(theta), np.sin(theta)**2 - np.cos(theta)**2]])
 
-# two basic boundary options
-def circle(s):
-    s *= 2*np.pi
-    return np.array([np.cos(s),np.sin(s)])
+    # some basic boundaries
 
-def ellipse(s):
-    s *= 2*np.pi
-    return np.array([np.cos(s), (1/np.sqrt(2))*np.sin(s)])
+    @staticmethod
+    def ellipse_boundary(s, a = np.sqrt(2), b = 1):
+        s *= 2*np.pi
+        return np.array([a*np.cos(s), b*np.sin(s)])
